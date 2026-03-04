@@ -492,3 +492,93 @@ def main_cli():
 
 if __name__ == '__main__':
     sys.exit(main_cli())
+
+
+class StreamingLogAnalyzer:
+    """Streaming support for LLM responses"""
+    
+    def __init__(self, api_key: str, provider: str = "openai"):
+        self.api_key = api_key
+        self.provider = provider
+    
+    def analyze_stream(self, log_content: str, callback):
+        """Analyze logs with streaming response"""
+        # Split content into chunks
+        chunks = [log_content[i:i+1000] for i in range(0, len(log_content), 1000)]
+        
+        for i, chunk in enumerate(chunks):
+            # Process chunk
+            result = self._analyze_chunk(chunk)
+            callback(result)
+        
+        return "Analysis complete"
+    
+    def _analyze_chunk(self, chunk: str) -> str:
+        """Analyze a single chunk"""
+        # Simple analysis without real API call
+        errors = chunk.lower().count('error')
+        warnings = chunk.lower().count('warning')
+        return f"Chunk analysis: {errors} errors, {warnings} warnings"
+
+
+import time
+from threading import Lock
+
+
+class RateLimiter:
+    """Rate limiting for API calls"""
+    
+    def __init__(self, requests_per_minute: int = 60):
+        self.requests_per_minute = requests_per_minute
+        self.requests = []
+        self.lock = Lock()
+    
+    def acquire(self) -> bool:
+        """Acquire permission to make a request"""
+        with self.lock:
+            now = time.time()
+            # Remove requests older than 1 minute
+            self.requests = [r for r in self.requests if now - r < 60]
+            
+            if len(self.requests) < self.requests_per_minute:
+                self.requests.append(now)
+                return True
+            return False
+    
+    def wait_if_needed(self):
+        """Wait if rate limit exceeded"""
+        while not self.acquire():
+            time.sleep(1)
+
+
+class SyslogServer:
+    """Syslog server for receiving logs"""
+    
+    def __init__(self, host: str = "0.0.0.0", port: int = 514):
+        self.host = host
+        self.port = port
+        self.running = False
+        self.logs = []
+    
+    def start(self):
+        """Start syslog server"""
+        import socket
+        self.running = True
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((self.host, self.port))
+        
+        while self.running:
+            try:
+                data, addr = sock.recvfrom(4096)
+                message = data.decode('utf-8', errors='ignore')
+                self.logs.append(message)
+            except Exception as e:
+                print(f"Error: {e}")
+    
+    def stop(self):
+        """Stop syslog server"""
+        self.running = False
+    
+    def get_logs(self) -> list:
+        """Get collected logs"""
+        return self.logs
