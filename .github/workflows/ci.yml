@@ -3,8 +3,6 @@ name: CI/CD & Release
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
   pull_request:
     branches: [main]
 
@@ -24,7 +22,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pyinstaller
+        pip install pytest pytest-cov
     
     - name: Run unit tests
       run: |
@@ -34,20 +32,9 @@ jobs:
       run: |
         pytest tests/e2e/ -v
 
-  build-release:
+  build:
     runs-on: ubuntu-latest
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
-    
-    strategy:
-      matrix:
-        include:
-          - platform: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - platform: macos-latest
-            target: x86_64-apple-darwin
-          - platform: windows-latest
-            target: x86_64-pc-windows-msvc
     
     steps:
     - uses: actions/checkout@v4
@@ -57,26 +44,66 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install PyInstaller
-      run: pip install pyinstaller
+    - name: Install dependencies
+      run: pip install -e .
     
-    - name: Build executable
+    - name: Build package
       run: |
-        pyinstaller --onefile --name logsentinel logsentinel.py
-        mkdir -p dist
+        python setup.py sdist bdist_wheel
     
-    - name: Create artifacts
-      run: |
-        cp dist/logsentinel.exe logsentinel-${{ matrix.platform }}.exe || true
-        cp dist/logsentinel logsentinel-${{ matrix.platform }} || true
-    
-    - name: Upload artifacts
+    - name: Upload package
       uses: actions/upload-artifact@v4
       with:
-        name: logsentinel-${{ matrix.platform }}
-        path: |
-          dist/logsentinel*
-          config.yaml
+        name: dist
+        path: dist/
+
+  tag-and-release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
+    
+    - name: Get next version
+      id: version
+      run: |
+        # Get current version from setup.py
+        VERSION=$(grep -E "version=" setup.py | head -1 | cut -d'"' -f2)
+        echo "current=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Extract major.minor.patch
+        OLD_IFS=$IFS
+        IFS='.'
+        read -ra VERSION_PARTS <<< "$VERSION"
+        IFS=$OLD_IFS
+        
+        MAJOR=${VERSION_PARTS[0]}
+        MINOR=${VERSION_PARTS[1]}
+        PATCH=${VERSION_PARTS[2]}
+        PATCH=$((PATCH + 1))
+        
+        NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+        echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+        echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: Release ${{ steps.version.outputs.tag }}
+        generate_release_notes: true
+        files: |
+          dist/*.tar.gz
+          dist/*.whl
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     runs-on: ubuntu-latest
@@ -90,27 +117,4 @@ jobs:
     
     - name: Test Docker image
       run: |
-        docker run logsentinel:${{ github.sha }} python3 logsentinel.py --help
-
-  release:
-    runs-on: ubuntu-latest
-    needs: [build-release, docker]
-    if: startsWith(github.ref, 'refs/tags/v')
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-    
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          logsentinel-ubuntu-latest
-          logsentinel-macos-latest
-          logsentinel-windows-latest.exe
-          logsentinel-*.whl
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TAG_TOKEN }}
+        docker run logsentinel:${{ github.sha }} logsentinel --help
