@@ -371,3 +371,42 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# Additional collectors - imported automatically
+def get_collector(collector_type: str, **kwargs):
+    """Get a collector by type"""
+    if collector_type == 'k8s':
+        from collectors.k8s_collector import K8sCollector
+        return K8sCollector(**kwargs)
+    elif collector_type == 'syslog':
+        from collectors.k8s_collector import SyslogCollector
+        return SyslogCollector(**kwargs)
+    elif collector_type == 'journald':
+        from collectors.k8s_collector import JournaldCollector
+        return JournaldCollector(**kwargs)
+    return None
+
+
+def generate_pdf(analysis: Dict, title: str = "Log Analysis") -> str:
+    """Generate PDF from analysis"""
+    from output.pdf_generator import PDFGenerator
+    gen = PDFGenerator()
+    return gen.generate(analysis, title)
+
+
+def generate_html(analysis: Dict, title: str = "Log Analysis") -> str:
+    """Generate HTML from analysis"""
+    from output.pdf_generator import PDFGenerator
+    gen = PDFGenerator()
+    return gen.generate_html(analysis, title)
+
+
+def check_and_alert(analysis: Dict):
+    """Check alerts and send notifications"""
+    from output.alerts import AlertManager
+    manager = AlertManager()
+    alerts = manager.check(analysis)
+    if alerts:
+        manager.send_alerts(alerts, analysis)
+    return alerts
