@@ -64,6 +64,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     
     - name: Download artifact
       uses: actions/download-artifact@v4
@@ -74,16 +76,10 @@ jobs:
     - name: Get next version
       id: version
       run: |
-        # Get current version from setup.py
         VERSION=$(grep -E "version=" setup.py | head -1 | cut -d'"' -f2)
         echo "current=$VERSION" >> $GITHUB_OUTPUT
         
-        # Extract major.minor.patch
-        OLD_IFS=$IFS
-        IFS='.'
-        read -ra VERSION_PARTS <<< "$VERSION"
-        IFS=$OLD_IFS
-        
+        IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
         MAJOR=${VERSION_PARTS[0]}
         MINOR=${VERSION_PARTS[1]}
         PATCH=${VERSION_PARTS[2]}
@@ -102,8 +98,6 @@ jobs:
         files: |
           dist/*.tar.gz
           dist/*.whl
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     runs-on: ubuntu-latest
