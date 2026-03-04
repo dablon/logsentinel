@@ -1,0 +1,33 @@
+# LogSentinel Configuration
+# AI-Powered Log Analyzer
+
+# LLM Provider: openai, anthropic, groq, moonshot, ollama
+llm_provider: openai
+llm_model: gpt-4o-mini
+
+# API keys (use environment variables in production)
+# openai_api_key: ${OPENAI_API_KEY}
+# anthropic_api_key: ${ANTHROPIC_API_KEY}
+# groq_api_key: ${GROQ_API_KEY}
+
+# Ollama (local)
+ollama_url: http://localhost:11434
+ollama_model: llama3
+
+# Analysis Settings
+max_errors: 50
+max_warnings: 50
+severity_threshold: WARNING
+
+# Output Settings
+default_format: text
+verbose: false
+
+# Sources
+log_sources:
+  - type: file
+    path: /var/log/syslog
+    enabled: false
+  - type: docker
+    containers: []
+    enabled: false
