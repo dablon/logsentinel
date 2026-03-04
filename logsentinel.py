@@ -410,3 +410,85 @@ def check_and_alert(analysis: Dict):
     if alerts:
         manager.send_alerts(alerts, analysis)
     return alerts
+
+
+def main_cli():
+    """CLI entry point"""
+    import argparse
+    import sys
+    
+    parser = argparse.ArgumentParser(
+        prog='logsentinel',
+        description='LogSentinel - AI-Powered Log Analyzer'
+    )
+    parser.add_argument('files', nargs='*', help='Log files to analyze')
+    parser.add_argument('-c', '--container', help='Docker container to analyze')
+    parser.add_argument('-n', '--lines', type=int, default=100, help='Number of lines for docker logs')
+    parser.add_argument('-o', '--output', choices=['text', 'json'], default='text', help='Output format')
+    parser.add_argument('--no-llm', action='store_true', help='Skip LLM analysis')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--version', action='version', version='LogSentinel 1.0.0')
+    
+    args = parser.parse_args()
+    
+    # Collect logs
+    entries = []
+    parser_obj = LogParser()
+    
+    for filepath in args.files:
+        entries.extend(parser_obj.parse_file(filepath))
+    
+    if args.container:
+        entries.extend(parser_obj.parse_docker_logs(args.container, args.lines))
+    
+    if not entries:
+        print("No log entries found")
+        return 1
+    
+    # Analyze
+    analyzer = LogAnalyzer()
+    analysis = analyzer.analyze(entries)
+    
+    # LLM analysis
+    if not args.no_llm:
+        llm = LLMAnalyzer()
+        llm_analysis = llm.analyze_with_llm(analysis)
+        analysis['llm_insights'] = llm_analysis
+    
+    # Output
+    if args.output == 'json':
+        import json
+        print(json.dumps(analysis, indent=2))
+    else:
+        print("=== LogSentinel Analysis ===")
+        s = analysis['summary']
+        print(f"\n📊 Summary:")
+        print(f"   Total: {s.get('total', 0)}")
+        print(f"   Errors: {s.get('error', 0)}")
+        print(f"   Warnings: {s.get('warning', 0)}")
+        
+        if analysis.get('errors'):
+            print(f"\n🔴 Top Errors:")
+            for e in analysis['errors'][:5]:
+                print(f"   [{e['level']}] {e['message'][:80]}")
+        
+        if analysis.get('warnings'):
+            print(f"\n🟡 Top Warnings:")
+            for w in analysis['warnings'][:5]:
+                print(f"   {w['message'][:80]}")
+        
+        a = analysis.get('analysis', {})
+        if a.get('recommendations'):
+            print(f"\n💡 Recommendations:")
+            for rec in a['recommendations']:
+                print(f"   - {rec}")
+        
+        if analysis.get('llm_insights'):
+            print(f"\n🤖 LLM Insights:")
+            print(analysis['llm_insights'])
+    
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main_cli())
