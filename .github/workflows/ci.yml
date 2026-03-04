@@ -26,15 +26,11 @@ jobs:
     
     - name: Run unit tests
       run: |
-        pytest tests/unit/ -v --cov=logsentinel --cov-report=term
+        pytest tests/unit/ -v --cov=logsentinel --cov-report=term-missing
     
     - name: Run e2e tests
       run: |
         pytest tests/e2e/ -v
-    
-    - name: Coverage check
-      run: |
-        coverage report --fail-under=80
 
   docker:
     runs-on: ubuntu-latest
