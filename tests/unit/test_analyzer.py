@@ -13,8 +13,8 @@ class TestLogAnalyzer:
         result = analyzer.analyze([])
         
         assert result['summary']['total'] == 0
-        assert result['summary']['errors'] == 0
-        assert result['summary']['warnings'] == 0
+        assert result['summary']['error'] == 0
+        assert result['summary']['warning'] == 0
     
     def test_analyze_single_error(self):
         """Analyze single error entry"""
@@ -28,7 +28,7 @@ class TestLogAnalyzer:
         result = analyzer.analyze(entries)
         
         assert result['summary']['total'] == 1
-        assert result['summary']['errors'] == 1
+        assert result['summary']['error'] == 1
         assert len(result['errors']) == 1
     
     def test_analyze_multiple_errors(self):
@@ -42,7 +42,7 @@ class TestLogAnalyzer:
         result = analyzer.analyze(entries)
         
         assert result['summary']['total'] == 3
-        assert result['summary']['errors'] == 2
+        assert result['summary']['error'] == 2
         assert result['summary']['info'] == 1
     
     def test_analyze_warnings(self):
@@ -54,7 +54,7 @@ class TestLogAnalyzer:
         ]
         result = analyzer.analyze(entries)
         
-        assert result['summary']['warnings'] == 2
+        assert result['summary']['warning'] == 2
         assert len(result['warnings']) == 2
     
     def test_analyze_mixed_levels(self):
@@ -71,8 +71,8 @@ class TestLogAnalyzer:
         
         assert result['summary']['debug'] == 1
         assert result['summary']['info'] == 1
-        assert result['summary']['warnings'] == 1
-        assert result['summary']['errors'] == 1
+        assert result['summary']['warning'] == 1
+        assert result['summary']['error'] == 1
         assert result['summary']['critical'] == 1
     
     def test_analyze_error_limit(self):

@@ -130,12 +130,15 @@ class LogAnalyzer:
     def analyze(self, entries: List[LogEntry]) -> Dict:
         self.errors = []
         self.warnings = []
-        self.stats = {'total': len(entries), 'errors': 0, 'warnings': 0, 'info': 0, 'debug': 0}
+        self.stats = {'total': len(entries), 'error': 0, 'warning': 0, 'info': 0, 'debug': 0, 'critical': 0, 'fatal': 0}
         
         for entry in entries:
-            level = entry.level
-            self.stats[level.lower() if level.lower() in self.stats else 'info'] = \
-                self.stats.get(level.lower(), 0) + 1
+            level = entry.level.upper()
+            level_key = level.lower()
+            if level_key in self.stats:
+                self.stats[level_key] = self.stats[level_key] + 1
+            else:
+                self.stats['info'] = self.stats.get('info', 0) + 1
             
             if level in ['ERROR', 'CRITICAL', 'FATAL']:
                 self.errors.append(entry)
