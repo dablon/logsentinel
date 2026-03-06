@@ -15,7 +15,9 @@ jobs:
       with:
         python-version: '3.11'
     - name: Install deps
-      run: pip install -r requirements.txt pytest
+      run: |
+        pip install -r requirements.txt pytest
+        pip install -e .
     - name: Run tests
       run: pytest tests/ -v
 
@@ -41,7 +43,9 @@ jobs:
       with:
         python-version: '3.11'
     - name: Install deps
-      run: pip install -r requirements.txt pyinstaller
+      run: |
+        pip install -r requirements.txt pyinstaller
+        pip install -e .
     - name: Build binary
       run: pyinstaller --onefile --name ${{ matrix.artifact }} logsentinel.py
     - name: Upload artifact
