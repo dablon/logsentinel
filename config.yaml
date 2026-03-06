@@ -31,3 +31,9 @@ log_sources:
   - type: docker
     containers: []
     enabled: false
+  - type: kubernetes
+    namespace: default
+    pods: []
+    container: null
+    context: null
+    enabled: false
