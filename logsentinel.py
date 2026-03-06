@@ -117,6 +117,28 @@ class LogParser:
             print(f"Error getting docker logs: {e}")
         return entries
 
+    def parse_k8s_logs(
+        self,
+        pod: str,
+        namespace: Optional[str] = None,
+        container: Optional[str] = None,
+        lines: int = 100,
+        context: Optional[str] = None,
+    ) -> List[LogEntry]:
+        """Get logs from a Kubernetes pod/container via kubectl."""
+        from collectors.k8s_collector import K8sCollector
+        collector = K8sCollector(namespace=namespace, context=context)
+        raw_lines = collector.get_pod_logs(pod, container=container, lines=lines)
+        source = f'k8s:{namespace or "default"}/{pod}'
+        if container:
+            source += f'/{container}'
+        entries = []
+        for line in raw_lines:
+            entry = self.parse_line(line, source=source)
+            if entry:
+                entries.append(entry)
+        return entries
+
 
 class LogAnalyzer:
     """Analyze logs and detect issues"""
@@ -303,24 +325,38 @@ def main():
     parser = argparse.ArgumentParser(description='LogSentinel - AI-Powered Log Analyzer')
     parser.add_argument('files', nargs='*', help='Log files to analyze')
     parser.add_argument('-c', '--container', help='Docker container to analyze')
-    parser.add_argument('-n', '--lines', type=int, default=100, help='Number of lines for docker logs')
+    parser.add_argument('-n', '--lines', type=int, default=100, help='Number of lines for docker/k8s logs')
     parser.add_argument('-o', '--output', choices=['text', 'json'], default='text', help='Output format')
     parser.add_argument('--no-llm', action='store_true', help='Skip LLM analysis')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
-    
+    parser.add_argument('--pod', help='Kubernetes pod name to analyze')
+    parser.add_argument('--namespace', help='Kubernetes namespace for the pod')
+    parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
+    parser.add_argument('--context', help='Kubernetes context to use')
+
     args = parser.parse_args()
-    
+
     # Collect logs
     entries = []
     parser_obj = LogParser()
-    
+
     # From files
     for filepath in args.files:
         entries.extend(parser_obj.parse_file(filepath))
-    
+
     # From docker
     if args.container:
         entries.extend(parser_obj.parse_docker_logs(args.container, args.lines))
+
+    # From Kubernetes
+    if args.pod:
+        entries.extend(parser_obj.parse_k8s_logs(
+            args.pod,
+            namespace=args.namespace,
+            container=args.k8s_container,
+            lines=args.lines,
+            context=args.context,
+        ))
     
     if not entries:
         print("No log entries found")
@@ -416,31 +452,45 @@ def main_cli():
     """CLI entry point"""
     import argparse
     import sys
-    
+
     parser = argparse.ArgumentParser(
         prog='logsentinel',
         description='LogSentinel - AI-Powered Log Analyzer'
     )
     parser.add_argument('files', nargs='*', help='Log files to analyze')
     parser.add_argument('-c', '--container', help='Docker container to analyze')
-    parser.add_argument('-n', '--lines', type=int, default=100, help='Number of lines for docker logs')
+    parser.add_argument('-n', '--lines', type=int, default=100, help='Number of lines for docker/k8s logs')
     parser.add_argument('-o', '--output', choices=['text', 'json'], default='text', help='Output format')
     parser.add_argument('--no-llm', action='store_true', help='Skip LLM analysis')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--version', action='version', version='LogSentinel 1.0.0')
-    
+    parser.add_argument('--pod', help='Kubernetes pod name to analyze')
+    parser.add_argument('--namespace', help='Kubernetes namespace for the pod')
+    parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
+    parser.add_argument('--context', help='Kubernetes context to use')
+
     args = parser.parse_args()
-    
+
     # Collect logs
     entries = []
     parser_obj = LogParser()
-    
+
     for filepath in args.files:
         entries.extend(parser_obj.parse_file(filepath))
-    
+
     if args.container:
         entries.extend(parser_obj.parse_docker_logs(args.container, args.lines))
-    
+
+    # From Kubernetes
+    if args.pod:
+        entries.extend(parser_obj.parse_k8s_logs(
+            args.pod,
+            namespace=args.namespace,
+            container=args.k8s_container,
+            lines=args.lines,
+            context=args.context,
+        ))
+
     if not entries:
         print("No log entries found")
         return 1
