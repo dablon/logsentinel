@@ -19,13 +19,67 @@ jobs:
     - name: Run tests
       run: pytest tests/ -v
 
-  release:
-    runs-on: ubuntu-latest
+  build:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: logsentinel-linux
+            ext: ''
+          - os: macos-latest
+            artifact: logsentinel-macos
+            ext: ''
+          - os: windows-latest
+            artifact: logsentinel-windows
+            ext: '.exe'
+    runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
-    - name: Create tag
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install deps
+      run: pip install -r requirements.txt pyinstaller
+    - name: Build binary
+      run: pyinstaller --onefile --name ${{ matrix.artifact }} logsentinel.py
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: dist/${{ matrix.artifact }}${{ matrix.ext }}
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Generate tag
+      id: tag
+      run: echo "tag=v1.0.$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+    - name: Create and push tag
       run: |
-        git tag v1.0.${{ github.run_number }}
-        git push origin v1.0.${{ github.run_number }}
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag ${{ steps.tag.outputs.tag }}
+        git push origin ${{ steps.tag.outputs.tag }}
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: dist/
+    - name: List release assets
+      run: find dist/ -type f | sort
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create ${{ steps.tag.outputs.tag }} \
+          --title "Release ${{ steps.tag.outputs.tag }}" \
+          --notes "Automated release ${{ steps.tag.outputs.tag }}" \
+          dist/logsentinel-linux/logsentinel-linux \
+          dist/logsentinel-macos/logsentinel-macos \
+          dist/logsentinel-windows/logsentinel-windows.exe
