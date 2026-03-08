@@ -7,6 +7,7 @@ import os
 import re
 import json
 import argparse
+import sys
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -119,24 +120,38 @@ class LogParser:
 
     def parse_k8s_logs(
         self,
-        pod: str,
+        pod: Optional[str] = None,
         namespace: Optional[str] = None,
         container: Optional[str] = None,
         lines: int = 100,
         context: Optional[str] = None,
     ) -> List[LogEntry]:
-        """Get logs from a Kubernetes pod/container via kubectl."""
+        """Get logs from a Kubernetes pod or smart-read a full namespace via kubectl."""
         from collectors.k8s_collector import K8sCollector
         collector = K8sCollector(namespace=namespace, context=context)
-        raw_lines = collector.get_pod_logs(pod, container=container, lines=lines)
-        source = f'k8s:{namespace or "default"}/{pod}'
-        if container:
-            source += f'/{container}'
         entries = []
-        for line in raw_lines:
-            entry = self.parse_line(line, source=source)
-            if entry:
-                entries.append(entry)
+
+        if pod:
+            raw_lines = collector.get_pod_logs(pod, container=container, lines=lines)
+            source = f'k8s:{namespace or "default"}/{pod}'
+            if container:
+                source += f'/{container}'
+            for line in raw_lines:
+                entry = self.parse_line(line, source=source)
+                if entry:
+                    entries.append(entry)
+            return entries
+
+        namespace_logs = collector.get_namespace_logs(lines=lines, container=container)
+        namespace_name = namespace or "default"
+        for pod_name, raw_lines in namespace_logs.items():
+            source = f'k8s:{namespace_name}/{pod_name}'
+            if container:
+                source += f'/{container}'
+            for line in raw_lines:
+                entry = self.parse_line(line, source=source)
+                if entry:
+                    entries.append(entry)
         return entries
 
 
@@ -330,7 +345,7 @@ def main():
     parser.add_argument('--no-llm', action='store_true', help='Skip LLM analysis')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--pod', help='Kubernetes pod name to analyze')
-    parser.add_argument('--namespace', help='Kubernetes namespace for the pod')
+    parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
 
@@ -349,7 +364,7 @@ def main():
         entries.extend(parser_obj.parse_docker_logs(args.container, args.lines))
 
     # From Kubernetes
-    if args.pod:
+    if args.pod or args.namespace:
         entries.extend(parser_obj.parse_k8s_logs(
             args.pod,
             namespace=args.namespace,
@@ -465,7 +480,7 @@ def main_cli():
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--version', action='version', version='LogSentinel 1.0.0')
     parser.add_argument('--pod', help='Kubernetes pod name to analyze')
-    parser.add_argument('--namespace', help='Kubernetes namespace for the pod')
+    parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
 
@@ -482,7 +497,7 @@ def main_cli():
         entries.extend(parser_obj.parse_docker_logs(args.container, args.lines))
 
     # From Kubernetes
-    if args.pod:
+    if args.pod or args.namespace:
         entries.extend(parser_obj.parse_k8s_logs(
             args.pod,
             namespace=args.namespace,

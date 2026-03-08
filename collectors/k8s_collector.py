@@ -72,6 +72,37 @@ class K8sCollector:
         pods = self.list_pods()
         return {pod: self.get_pod_logs(pod, lines=lines) for pod in pods}
 
+    def get_namespace_logs(
+        self,
+        lines: int = 100,
+        container: Optional[str] = None,
+    ) -> dict:
+        """
+        Smart namespace log collection.
+
+        Reads logs from all pods in the namespace while keeping total volume near
+        the requested `lines` budget by splitting lines across discovered pods.
+        If a pod has no current logs, a best-effort attempt is made to read
+        previous container logs.
+        """
+        pods = self.list_pods()
+        if not pods:
+            return {}
+
+        per_pod_lines = max(1, lines // len(pods))
+        namespace_logs = {}
+        for pod in pods:
+            pod_logs = self.get_pod_logs(pod, container=container, lines=per_pod_lines)
+            if not pod_logs:
+                pod_logs = self.get_pod_logs(
+                    pod,
+                    container=container,
+                    lines=per_pod_lines,
+                    previous=True,
+                )
+            namespace_logs[pod] = pod_logs
+        return namespace_logs
+
 
 class SyslogCollector:
     """Collect logs from a syslog file."""
