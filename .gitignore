@@ -10,3 +10,5 @@ htmlcov/
 .venv/
 venv/
 .DS_Store
+build/
+dist/

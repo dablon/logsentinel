@@ -202,6 +202,18 @@ logsentinel --container my-app
 logsentinel --container my-app --lines 500
 ```
 
+### Analyze all pods in a Kubernetes namespace (smart read)
+
+```bash
+logsentinel --namespace production --lines 300
+```
+
+### Analyze a specific Kubernetes pod
+
+```bash
+logsentinel --pod api-7f8d5 --namespace production
+```
+
 ### Output as JSON
 
 ```bash
@@ -236,6 +248,10 @@ logsentinel --help
 | `files` | — | `str…` | — | One or more log files to analyze |
 | `--container` | `-c` | `str` | — | Docker container name/ID to tail |
 | `--lines` | `-n` | `int` | `100` | Lines to fetch from Docker logs |
+| `--pod` | — | `str` | — | Kubernetes pod name to analyze |
+| `--namespace` | — | `str` | — | Kubernetes namespace (reads all pods if `--pod` omitted) |
+| `--k8s-container` | — | `str` | — | Container name within Kubernetes pod |
+| `--context` | — | `str` | — | Kubernetes context to use |
 | `--output` | `-o` | `text\|json` | `text` | Output format |
 | `--no-llm` | — | flag | off | Skip LLM analysis |
 | `--verbose` | `-v` | flag | off | Show extra detail |
