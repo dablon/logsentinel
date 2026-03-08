@@ -7,7 +7,7 @@ setup(
     author="Blade",
     author_email="blade@maleon.run",
     url="https://github.com/dablon/logsentinel",
-    packages=find_packages(),
+    py_modules=["logsentinel"],
     include_package_data=True,
     install_requires=[
         "pyyaml>=6.0",
