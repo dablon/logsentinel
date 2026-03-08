@@ -473,4 +473,4 @@ logsentinel/
 
 ## License
 
-[MIT](LICENSE) © Blade
+[MIT](LICENSE) 
