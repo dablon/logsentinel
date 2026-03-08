@@ -238,14 +238,24 @@ class LLMAnalyzer:
     def __init__(self, provider: str = None, model: str = None, api_key: str = None):
         self.provider = provider or os.getenv('LLM_PROVIDER', 'openai')
         self.model = model or os.getenv('LLM_MODEL', 'gpt-4o-mini')
-        self.api_key = api_key or os.getenv('OPENAI_API_KEY', '')
+        self.api_key = api_key or self._get_provider_api_key()
         
         # Provider configs
         self.endpoints = {
             'openai': 'https://api.openai.com/v1/chat/completions',
             'anthropic': 'https://api.anthropic.com/v1/messages',
             'groq': 'https://api.groq.com/openai/v1/chat/completions',
+            'minimax': 'https://api.minimax.io/v1/chat/completions',
         }
+
+    def _get_provider_api_key(self) -> str:
+        key_map = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'groq': 'GROQ_API_KEY',
+            'minimax': 'MINIMAX_API_KEY',
+        }
+        return os.getenv(key_map.get(self.provider, 'OPENAI_API_KEY'), '')
     
     def analyze_with_llm(self, analysis: Dict) -> str:
         if not self.api_key:
@@ -278,10 +288,21 @@ Be concise and actionable."""
             return self._call_groq(prompt)
         elif self.provider == 'anthropic':
             return self._call_anthropic(prompt)
+        elif self.provider == 'minimax':
+            return self._call_minimax(prompt)
         else:
             return "Unsupported provider"
     
     def _call_openai(self, prompt: str) -> str:
+        return self._call_chat_completions(prompt, 'openai')
+    
+    def _call_groq(self, prompt: str) -> str:
+        return self._call_chat_completions(prompt, 'groq')  # Same API format
+
+    def _call_minimax(self, prompt: str) -> str:
+        return self._call_chat_completions(prompt, 'minimax')
+
+    def _call_chat_completions(self, prompt: str, provider: str) -> str:
         try:
             import requests
             headers = {
@@ -294,7 +315,7 @@ Be concise and actionable."""
                 'max_tokens': 500
             }
             resp = requests.post(
-                self.endpoints['openai'],
+                self.endpoints[provider],
                 headers=headers,
                 json=payload,
                 timeout=30
@@ -305,9 +326,6 @@ Be concise and actionable."""
                 return f"API Error: {resp.status_code}"
         except Exception as e:
             return f"Error: {e}"
-    
-    def _call_groq(self, prompt: str) -> str:
-        return self._call_openai(prompt)  # Same API format
     
     def _call_anthropic(self, prompt: str) -> str:
         try:

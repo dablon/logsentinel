@@ -1,7 +1,7 @@
 # LogSentinel Configuration
 # AI-Powered Log Analyzer
 
-# LLM Provider: openai, anthropic, groq, moonshot, ollama
+# LLM Provider: openai, anthropic, groq, minimax, moonshot, ollama
 llm_provider: openai
 llm_model: gpt-4o-mini
 
@@ -9,6 +9,7 @@ llm_model: gpt-4o-mini
 # openai_api_key: ${OPENAI_API_KEY}
 # anthropic_api_key: ${ANTHROPIC_API_KEY}
 # groq_api_key: ${GROQ_API_KEY}
+# minimax_api_key: ${MINIMAX_API_KEY}
 
 # Ollama (local)
 ollama_url: http://localhost:11434

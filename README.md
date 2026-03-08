@@ -151,6 +151,7 @@ docker build -t logsentinel .
 | `OPENAI_API_KEY` | OpenAI API key | — |
 | `ANTHROPIC_API_KEY` | Anthropic API key | — |
 | `GROQ_API_KEY` | Groq API key | — |
+| `MINIMAX_API_KEY` | Minimax API key | — |
 
 ```bash
 export LLM_PROVIDER="openai"
@@ -161,7 +162,7 @@ export OPENAI_API_KEY="sk-..."
 ### `config.yaml`
 
 ```yaml
-# LLM Provider: openai, anthropic, groq, ollama
+# LLM Provider: openai, anthropic, groq, minimax, ollama
 llm_provider: openai
 llm_model: gpt-4o-mini
 
@@ -363,6 +364,7 @@ graph LR
     LS -->|LLM_PROVIDER=openai| OA["☁️ OpenAI<br/>gpt-4o-mini / gpt-4o"]
     LS -->|LLM_PROVIDER=anthropic| AN["☁️ Anthropic<br/>claude-3-5-sonnet"]
     LS -->|LLM_PROVIDER=groq| GR["☁️ Groq<br/>llama-3-70b-versatile"]
+    LS -->|LLM_PROVIDER=minimax| MM["☁️ Minimax<br/>MiniMax-M2"]
     LS -->|LLM_PROVIDER=ollama| OL["🖥️ Ollama (local)<br/>llama3 / mistral"]
 ```
 
@@ -371,6 +373,7 @@ graph LR
 | `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-3-5-sonnet-20241022` |
 | `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `minimax` | `MINIMAX_API_KEY` | `MiniMax-M2` |
 | `ollama` | — (local) | `llama3`, `mistral` |
 
 ### Switching provider

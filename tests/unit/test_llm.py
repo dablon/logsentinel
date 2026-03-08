@@ -63,6 +63,7 @@ class TestLLMAnalyzer:
         assert 'openai' in analyzer.endpoints
         assert 'anthropic' in analyzer.endpoints
         assert 'groq' in analyzer.endpoints
+        assert 'minimax' in analyzer.endpoints
     
     def test_env_var_provider(self):
         """Test provider from environment variable"""
@@ -93,3 +94,15 @@ class TestLLMAnalyzer:
         assert analyzer.api_key == 'env-test-key'
         
         del os.environ['OPENAI_API_KEY']
+
+    def test_env_var_api_key_minimax(self):
+        """Test Minimax API key from environment variable"""
+        os.environ['LLM_PROVIDER'] = 'minimax'
+        os.environ['MINIMAX_API_KEY'] = 'minimax-test-key'
+
+        analyzer = LLMAnalyzer()
+
+        assert analyzer.api_key == 'minimax-test-key'
+
+        del os.environ['MINIMAX_API_KEY']
+        del os.environ['LLM_PROVIDER']
