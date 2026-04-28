@@ -104,12 +104,15 @@ class LogParser:
                 ['docker', 'logs', '--tail', str(lines), container],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=30
             )
-            for line in result.stdout.split('\n'):
-                entry = self.parse_line(line, source=f'docker:{container}')
-                if entry:
-                    entries.append(entry)
+            if result.stdout:
+                for line in result.stdout.split('\n'):
+                    entry = self.parse_line(line, source=f'docker:{container}')
+                    if entry:
+                        entries.append(entry)
         except subprocess.TimeoutExpired:
             print(f"Timeout getting logs from {container}")
         except FileNotFoundError:
