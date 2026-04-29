@@ -11,8 +11,12 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Change to the script directory
 Set-Location $ScriptDir
 
-# Install in editable mode
-python -m pip install -e .
+# Uninstall first if exists (ignore errors)
+Write-Host "Checking for existing installation..." -ForegroundColor Yellow
+python -m pip uninstall logsentinel -y 2>$null | Out-Null
+
+# Clean build and install from current source (editable mode)
+python -m pip install --force-reinstall --no-cache-dir --no-build-isolation -e .
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "LogSentinel installed successfully in editable mode!" -ForegroundColor Green

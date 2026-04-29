@@ -357,6 +357,29 @@ Be concise and actionable."""
             return f"Error: {e}"
 
 
+def monitor_namespace(namespace, context, level, filter_keywords, refresh):
+    """Real-time monitor entry point"""
+    from collectors.k8s_monitor import LogMonitor
+    import signal
+    import sys
+
+    def signal_handler(sig, frame):
+        print('\nStopping monitor...')
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    monitor = LogMonitor(
+        namespace=namespace,
+        context=context,
+        level=level,
+        filter_keywords=filter_keywords.split(',') if filter_keywords else [],
+        refresh=refresh,
+    )
+    monitor.start()
+
+
 def main():
     parser = argparse.ArgumentParser(description='LogSentinel - AI-Powered Log Analyzer')
     parser.add_argument('files', nargs='*', help='Log files to analyze')
@@ -369,8 +392,28 @@ def main():
     parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
+    parser.add_argument('-m', '--monitor', action='store_true', help='Enable real-time monitor mode')
+    parser.add_argument('-l', '--level', default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Minimum severity level to display (default: INFO)')
+    parser.add_argument('-f', '--filter', default='',
+                        help='Comma-separated keywords (AND logic)')
+    parser.add_argument('-r', '--refresh', type=int, default=2,
+                        help='Pod discovery refresh interval in seconds (default: 2)')
 
     args = parser.parse_args()
+
+    if args.monitor:
+        if not args.namespace:
+            parser.error('--monitor requires --namespace')
+        monitor_namespace(
+            namespace=args.namespace,
+            context=args.context,
+            level=args.level,
+            filter_keywords=args.filter,
+            refresh=args.refresh,
+        )
+        return
 
     # Collect logs
     entries = []
