@@ -34,12 +34,15 @@ Key capabilities:
 
 - 📂 Parse log files (standard, ISO-8601, and syslog formats)
 - 🐳 Tail Docker container logs
+- ☸️  Analyze logs from Kubernetes pods and namespaces
+- 🩺 **Deep namespace diagnosis** — pod health, resources, events, workloads, services, PVCs
+- 📺 **Real-time log monitor** — stream K8s logs with severity/keyword filtering
 - 📡 Receive logs via UDP syslog server
 - 🔍 Classify entries by severity (DEBUG → CRITICAL)
 - 📊 Detect error patterns and repeated messages
 - 💡 Rule-based recommendations (memory, connection, permission issues)
-- 🤖 LLM-powered root-cause analysis (OpenAI, Anthropic, Groq)
-- 📄 Text and JSON output formats
+- 🤖 LLM-powered root-cause analysis (OpenAI, Anthropic, Groq, Minimax, Ollama)
+- 📄 Text, JSON output + HTML/MD/PDF report generation
 
 ---
 
@@ -50,30 +53,57 @@ graph TD
     subgraph Sources
         F[📂 Log Files]
         D[🐳 Docker Containers]
+        K[☸️ Kubernetes Pods/Namespaces]
         S[📡 Syslog UDP]
+    end
+
+    subgraph Modes
+        SCAN[🔍 One-Shot Analysis]
+        DIAG[🩺 Deep Diagnose]
+        MON[📺 Real-Time Monitor]
     end
 
     subgraph Core["LogSentinel Core"]
         P[LogParser]
         A[LogAnalyzer]
         L[LLMAnalyzer]
+        DC[DiagnosticCollector]
+        DA[DiagnosticAnalyzer]
+        LM[LogMonitor]
     end
 
     subgraph Output
         T[📝 Text Report]
         J[📋 JSON Report]
+        H[🌐 HTML Report]
     end
 
     F -->|parse_file| P
     D -->|parse_docker_logs| P
+    K -->|kubectl| P
     S -->|SyslogServer| P
 
     P -->|LogEntry list| A
     A -->|analysis dict| L
-    L -->|llm_insights| T
+    L -->|llm_insights| SCAN
+    A --> SCAN
+    L --> SCAN
     A --> T
     A --> J
     L --> J
+
+    K -->|kubectl| DC
+    DC -->|DiagnosticSnapshot| DA
+    P --> DIAG
+    A --> DIAG
+    DA --> DIAG
+    L --> DIAG
+    DIAG --> H
+    DIAG --> T
+    DIAG --> J
+
+    K -->|kubectl --follow| LM
+    LM --> MON
 ```
 
 ---
@@ -215,6 +245,35 @@ logsentinel --namespace production --lines 300
 logsentinel --pod api-7f8d5 --namespace production
 ```
 
+### Deep namespace diagnosis (health + logs + events + resources + LLM)
+
+```bash
+# Full diagnosis with LLM root cause analysis
+logsentinel --diagnose --namespace production
+
+# Generate an HTML report file
+logsentinel --diagnose --namespace production --report
+
+# Specify report output directory
+logsentinel --diagnose --namespace production --report --report-dir ./diagnostics
+
+# Quick diagnosis, no LLM, JSON output
+logsentinel --diagnose --namespace production --no-llm --output json
+```
+
+### Real-time log monitoring
+
+```bash
+# Monitor all pods in a namespace, ERROR level and above
+logsentinel --monitor --namespace production --level ERROR
+
+# Filter by keywords (AND logic)
+logsentinel --monitor --namespace production --filter "timeout,refused"
+
+# Adjust pod discovery refresh interval
+logsentinel --monitor --namespace production --refresh 5
+```
+
 ### Output as JSON
 
 ```bash
@@ -248,11 +307,18 @@ logsentinel --help
 |---|---|---|---|---|
 | `files` | — | `str…` | — | One or more log files to analyze |
 | `--container` | `-c` | `str` | — | Docker container name/ID to tail |
-| `--lines` | `-n` | `int` | `100` | Lines to fetch from Docker logs |
+| `--lines` | `-n` | `int` | `100` | Lines to fetch from Docker/K8s logs |
 | `--pod` | — | `str` | — | Kubernetes pod name to analyze |
 | `--namespace` | — | `str` | — | Kubernetes namespace (reads all pods if `--pod` omitted) |
 | `--k8s-container` | — | `str` | — | Container name within Kubernetes pod |
 | `--context` | — | `str` | — | Kubernetes context to use |
+| `--diagnose` | — | flag | off | Deep namespace diagnosis (pods, resources, events, workloads, services + log analysis + LLM) |
+| `--monitor` | `-m` | flag | off | Real-time K8s log streaming with filtering |
+| `--level` | `-l` | `DEBUG\|INFO\|WARNING\|ERROR\|CRITICAL` | `INFO` | Minimum severity for monitor |
+| `--filter` | `-f` | `str` | — | Comma-separated keywords for monitor (AND logic) |
+| `--refresh` | `-r` | `int` | `2` | Pod discovery refresh interval in seconds (monitor) |
+| `--report` | — | flag | off | Generate an HTML report file from diagnosis |
+| `--report-dir` | — | `str` | `./reports` | Directory for report output |
 | `--output` | `-o` | `text\|json` | `text` | Output format |
 | `--no-llm` | — | flag | off | Skip LLM analysis |
 | `--verbose` | `-v` | flag | off | Show extra detail |
@@ -351,6 +417,70 @@ logsentinel --help
 }
 ```
 
+### Diagnose output (`logsentinel --diagnose --namespace production`)
+
+```
+=== LogSentinel Namespace Diagnosis ===
+Namespace: production | Context: default | Time: 2026-04-28 10:42:15
+
+📦 PODS (5 found, 4 healthy, 1 unhealthy)
+  ✅ [HEALTHY  ] api-deployment-7f8d5             Running, 0 restarts, age: 2h
+  ✅ [HEALTHY  ] worker-deployment-3a2b1          Running, 2 restarts, age: 2h
+  ❌ [CRITICAL ] cache-deployment-9c4f2           Running, 12 restarts, age: 2h
+       └─ cache: waiting, CrashLoopBackOff, image: cache:v1
+  ✅ [HEALTHY  ] proxy-deployment-1d8e3           Running, 0 restarts, age: 2h
+  ✅ [HEALTHY  ] db-statefulset-0                 Running, 0 restarts, age: 5h
+
+⚡ RESOURCES
+  api-deployment-7f8d5             CPU: 120m/500m | MEM: 256Mi/512Mi
+  worker-deployment-3a2b1          CPU: 850m/1000m | MEM: 1.2Gi/2Gi
+  proxy-deployment-1d8e3           CPU: 50m/200m  | MEM: 64Mi/256Mi
+
+📋 EVENTS (3 warnings, 5 normal)
+  ⚠️  [2026-04-28 10:40:00] Back-off restarting failed container cache in cache-deployment-9c4f2
+  ⚠️  [2026-04-28 10:39:00] Liveness probe failed: dial tcp 10.0.0.5:8080: connection refused
+
+🔍 DEPLOYMENTS
+  ✅ api-deployment             3/3 ready
+  ✅ worker-deployment          2/2 ready
+  ❌ cache-deployment           0/1 ready
+
+🔗 SERVICES
+  api-svc                   ClusterIP  10.0.0.1   8080:80/TCP
+  cache-svc                 ClusterIP  10.0.0.2   6379/TCP
+
+🚨 ISSUES FOUND (3)
+  🔴 [CRITICAL] [crashloop] pod/cache-deployment-9c4f2
+       Container 'cache' is crash-looping (CrashLoopBackOff).
+  🟡 [WARNING] [resource] pod/worker-deployment-3a2b1
+       CPU usage at 85% of limit (850m/1000m).
+  🟡 [WARNING] [readiness] deployment/cache-deployment
+       Deployment cache-deployment has 0/1 ready replicas (desired: 1).
+
+💡 RECOMMENDATIONS
+  - CrashLoopBackOff on cache-deployment-9c4f2/cache: check pod logs for root cause
+  - High CPU on worker-deployment-3a2b1 (85% of limit): consider increasing CPU limit
+  - Deployment cache-deployment not fully ready (0/1): check pod status
+
+🤖 LLM ROOT CAUSE ANALYSIS
+  The cache deployment is crashing repeatedly due to a misconfigured Redis connection
+  string. Ensure the CACHE_URL environment variable is set correctly.
+
+📄 Report saved: ./reports/diagnose_production_20260428_104215.html
+```
+
+### Monitor output (`logsentinel --monitor --namespace production --level ERROR`)
+
+```
+=== LogSentinel Monitor ===
+Namespace: production
+Level: ERROR | Filter: none
+Press Ctrl+C to stop
+---
+[2026-04-28 10:42:15] [ERROR  ] [api-7f8d5] Database connection refused at 10.0.0.5:5432
+[2026-04-28 10:42:17] [ERROR  ] [worker-3a2b1] Connection timeout after 30s to redis:6379
+```
+
 ---
 
 ## LLM Providers
@@ -444,19 +574,32 @@ python setup.py sdist bdist_wheel
 
 ```
 logsentinel/
-├── logsentinel.py        # Core: LogParser, LogAnalyzer, LLMAnalyzer, CLI
-├── config.yaml           # Default configuration
-├── setup.py              # Package metadata and entry points
-├── requirements.txt      # Runtime dependencies
-├── Dockerfile            # Container image
-├── docker-compose.yml    # Local dev / test compose
-└── tests/
-    ├── unit/             # Unit tests (no external dependencies)
-    │   ├── test_analyzer.py
-    │   ├── test_collectors.py
-    │   └── test_llm.py
-    └── e2e/              # End-to-end flow tests
-        └── test_flow.py
+├── logsentinel.py           # Core: LogParser, LogAnalyzer, LLMAnalyzer, CLI
+├── config.yaml              # Default configuration
+├── setup.py                 # Package metadata and entry points
+├── requirements.txt         # Runtime dependencies
+├── Dockerfile               # Container image
+├── docker-compose.yml       # Local dev / test compose
+├── collectors/              # Log source collectors
+│   ├── k8s_collector.py     # K8s, Syslog, Journald collectors
+│   ├── k8s_monitor.py       # Real-time K8s log streaming
+│   └── k8s_diagnose.py      # Deep namespace health collector + analyzer
+├── output/                  # Output and alert modules
+│   ├── pdf_generator.py     # Markdown/HTML/PDF report generation
+│   ├── diagnose_report.py   # HTML report generator for diagnosis
+│   └── alerts.py            # Rule-based alert manager
+├── tests/
+│   ├── unit/                # Unit tests (no external dependencies)
+│   │   ├── test_analyzer.py
+│   │   ├── test_collectors.py
+│   │   ├── test_diagnose.py  # 45 tests
+│   │   ├── test_llm.py
+│   │   └── test_monitor.py
+│   └── e2e/                 # End-to-end flow tests
+│       └── test_flow.py
+└── docs/superpowers/        # Design specs and implementation plans
+    ├── specs/
+    └── plans/
 ```
 
 ---
