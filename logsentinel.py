@@ -380,6 +380,315 @@ def monitor_namespace(namespace, context, level, filter_keywords, refresh):
     monitor.start()
 
 
+def diagnose_namespace(namespace, context, lines, no_llm, output_format, report, report_dir):
+    """Deep namespace diagnosis entry point"""
+    from collectors.k8s_diagnose import K8sDiagnosticCollector, DiagnosticAnalyzer
+    from collectors.k8s_collector import K8sCollector
+
+    # 1. Collect diagnostic snapshot
+    print(f"Collecting namespace health data for '{namespace}'...", file=sys.stderr)
+    coll = K8sDiagnosticCollector(namespace=namespace, context=context)
+    snapshot = coll.collect_all()
+
+    # 2. Collect logs via existing pipeline
+    k8s = K8sCollector(namespace=namespace, context=context)
+    log_entries = []
+    log_parser = LogParser()
+    namespace_logs = k8s.get_namespace_logs(lines=lines)
+    for pod_name, pod_log_lines in namespace_logs.items():
+        for line in pod_log_lines:
+            entry = log_parser.parse_line(line, source=f"k8s:{namespace}/{pod_name}")
+            if entry:
+                log_entries.append(entry)
+
+    # 3. Run log analysis
+    log_analysis = None
+    if log_entries:
+        analyzer = LogAnalyzer()
+        log_analysis = analyzer.analyze(log_entries)
+
+    # 4. Run diagnostic analysis
+    diag_analyzer = DiagnosticAnalyzer()
+    diagnosis = diag_analyzer.analyze(snapshot, log_analysis)
+
+    # 5. LLM analysis (unless --no-llm)
+    if not no_llm:
+        llm = LLMAnalyzer()
+        # Build a rich context for the LLM
+        llm_prompt = _build_diagnostic_llm_prompt(diagnosis, log_analysis)
+        llm_insights = llm.analyze_with_llm(llm_prompt)
+        diagnosis['llm_insights'] = llm_insights
+
+    # 6. Output
+    if output_format == 'json':
+        _output_diagnosis_json(diagnosis)
+    else:
+        _output_diagnosis_text(diagnosis)
+
+    # 7. Generate report file if requested
+    report_path = None
+    if report:
+        from output.diagnose_report import DiagnoseReportGenerator
+        gen = DiagnoseReportGenerator(output_dir=report_dir)
+        try:
+            report_path = gen.generate_html(diagnosis)
+            print(f"\n📄 Report saved: {report_path}")
+        except Exception as e:
+            print(f"\n⚠ Failed to generate report: {e}", file=sys.stderr)
+
+    # Print collection errors if any
+    if snapshot.errors:
+        print(f"\n⚠️ Collection warnings:")
+        for err in snapshot.errors:
+            print(f"   - {err}")
+
+
+def _build_diagnostic_llm_prompt(diagnosis: dict, log_analysis: dict) -> dict:
+    """Build a structured prompt for LLM root cause analysis."""
+    snapshot = diagnosis['snapshot']
+    issues = diagnosis['issues']
+    pod_summary = diagnosis['pod_summary']
+
+    text_parts = []
+
+    text_parts.append(f"NAMESPACE DIAGNOSIS: {snapshot.namespace}")
+    text_parts.append(f"Timestamp: {snapshot.timestamp}")
+    text_parts.append(f"Pods: {pod_summary['total']} total, {pod_summary['healthy']} healthy, "
+                      f"{pod_summary['unhealthy']} unhealthy, {pod_summary['warning']} warning")
+
+    if issues:
+        text_parts.append("\nISSUES FOUND:")
+        for i in issues:
+            text_parts.append(f"  [{i.severity.upper()}] [{i.category}] {i.source}: {i.message}")
+
+    if diagnosis.get('recommendations'):
+        text_parts.append("\nRECOMMENDATIONS:")
+        for r in diagnosis['recommendations']:
+            text_parts.append(f"  - {r}")
+
+    if log_analysis:
+        ls = log_analysis.get('summary', {})
+        text_parts.append(f"\nLOG ANALYSIS: {ls.get('total', 0)} entries, "
+                          f"{ls.get('errors', 0)} errors, {ls.get('warnings', 0)} warnings")
+        if log_analysis.get('errors'):
+            text_parts.append("Top errors:")
+            for e in log_analysis['errors'][:5]:
+                text_parts.append(f"  [{e.get('level', 'ERROR')}] {e.get('message', '')}")
+
+    return {
+        'summary': {
+            'total': pod_summary['total'],
+            'errors': len([i for i in issues if i.severity == 'critical']),
+            'warnings': len([i for i in issues if i.severity == 'warning']),
+        },
+        'errors': [{
+            'level': i.severity.upper(),
+            'message': i.message,
+        } for i in issues],
+        'analysis': {
+            'error_patterns': [],
+            'warnings': [i.message for i in issues if i.severity == 'warning'],
+            'recommendations': diagnosis.get('recommendations', []),
+        },
+        '_llm_context': '\n'.join(text_parts),
+    }
+
+
+def _output_diagnosis_json(diagnosis: dict):
+    """Output diagnosis as JSON."""
+    snapshot = diagnosis['snapshot']
+    output = {
+        'namespace': snapshot.namespace,
+        'context': snapshot.context,
+        'timestamp': snapshot.timestamp,
+        'pod_summary': diagnosis['pod_summary'],
+        'pods': [
+            {
+                'name': p.name,
+                'phase': p.phase,
+                'ready': p.ready,
+                'restarts': p.restarts,
+                'age': p.age,
+                'health': p.health,
+                'node': p.node,
+                'containers': [
+                    {
+                        'name': c.name,
+                        'ready': c.ready,
+                        'restart_count': c.restart_count,
+                        'state': c.state,
+                        'reason': c.reason,
+                        'image': c.image,
+                    } for c in p.containers
+                ],
+                'conditions': p.conditions,
+            } for p in snapshot.pods
+        ],
+        'resources': [
+            {
+                'pod': r.pod,
+                'cpu_usage': r.cpu_usage,
+                'cpu_limit': r.cpu_limit,
+                'mem_usage': r.mem_usage,
+                'mem_limit': r.mem_limit,
+            } for r in snapshot.resources
+        ],
+        'events': [
+            {
+                'type': e.type,
+                'reason': e.reason,
+                'message': e.message,
+                'timestamp': e.timestamp,
+            } for e in snapshot.events
+        ],
+        'workloads': {
+            'deployments': [
+                {'name': d.name, 'ready': d.ready, 'conditions': d.conditions}
+                for d in snapshot.deployments
+            ],
+            'statefulsets': [
+                {'name': s.name, 'ready': s.ready, 'conditions': s.conditions}
+                for s in snapshot.statefulsets
+            ],
+            'daemonsets': [
+                {'name': d.name, 'ready': d.ready, 'conditions': d.conditions}
+                for d in snapshot.daemonsets
+            ],
+        },
+        'services': snapshot.services,
+        'hpas': snapshot.hpas,
+        'pvcs': snapshot.pvcs,
+        'issues': [
+            {
+                'severity': i.severity,
+                'source': i.source,
+                'category': i.category,
+                'message': i.message,
+            } for i in diagnosis.get('issues', [])
+        ],
+        'recommendations': diagnosis.get('recommendations', []),
+        'llm_insights': diagnosis.get('llm_insights', ''),
+        'collection_errors': snapshot.errors,
+    }
+    print(json.dumps(output, indent=2))
+
+
+def _output_diagnosis_text(diagnosis: dict):
+    """Output diagnosis as formatted text."""
+    snapshot = diagnosis['snapshot']
+    pod_summary = diagnosis['pod_summary']
+    event_summary = diagnosis.get('event_summary', {})
+
+    print("=== LogSentinel Namespace Diagnosis ===")
+    print(f"Namespace: {snapshot.namespace} | Context: {snapshot.context or 'default'} | Time: {snapshot.timestamp[:19]}")
+
+    # Pods
+    print(f"\n📦 PODS ({pod_summary['total']} found, {pod_summary['healthy']} healthy, "
+          f"{pod_summary['unhealthy']} unhealthy, {pod_summary['warning']} warning)")
+    for pod in snapshot.pods:
+        icon = { 'healthy': '✅', 'warning': '⚠️', 'critical': '❌', 'unknown': '❓' }.get(pod.health, '❓')
+        health_tag = f"[{pod.health.upper():<9}]"
+        print(f"  {icon} {health_tag} {pod.name:<40} {pod.phase}, {pod.restarts} restarts, age: {pod.age}")
+        for c in pod.containers:
+            if c.state != 'running' or c.reason:
+                print(f"       └─ {c.name}: {c.state}, {c.reason}, image: {c.image}")
+
+    # Resources
+    if snapshot.resources:
+        print(f"\n⚡ RESOURCES")
+        for ru in snapshot.resources:
+            cpu_str = f"CPU: {ru.cpu_usage}"
+            if ru.cpu_limit and ru.cpu_limit not in ('N/A', '0'):
+                cpu_str += f"/{ru.cpu_limit}"
+            mem_str = f"MEM: {ru.mem_usage}"
+            if ru.mem_limit and ru.mem_limit not in ('N/A', '0'):
+                mem_str += f"/{ru.mem_limit}"
+            print(f"  {ru.pod:<40} {cpu_str} | {mem_str}")
+    else:
+        print(f"\n⚡ RESOURCES: N/A (metrics-server not available)")
+
+    # Events
+    if snapshot.events:
+        warning_events = [e for e in snapshot.events if e.type == 'Warning']
+        normal_events = [e for e in snapshot.events if e.type == 'Normal']
+        print(f"\n📋 EVENTS ({len(warning_events)} warnings, {len(normal_events)} normal)")
+        displayed = warning_events if warning_events else snapshot.events[-10:]
+        for e in displayed[-10:]:
+            tag = '⚠️ ' if e.type == 'Warning' else '   '
+            ts = e.timestamp[:19] if e.timestamp else 'N/A'
+            print(f"  {tag}[{ts}] {e.message[:120]}")
+    else:
+        print(f"\n📋 EVENTS: None")
+
+    # Deployments
+    if snapshot.deployments:
+        print(f"\n🔍 DEPLOYMENTS")
+        for d in snapshot.deployments:
+            icon = '✅' if d.available >= d.desired else '❌'
+            print(f"  {icon} {d.name:<40} {d.ready} ready")
+            for cond in d.conditions:
+                if cond.startswith('!'):
+                    print(f"       └─ {cond}")
+
+    # StatefulSets
+    if snapshot.statefulsets:
+        print(f"\n🔍 STATEFULSETS")
+        for s in snapshot.statefulsets:
+            icon = '✅' if s.available >= s.desired else '❌'
+            print(f"  {icon} {s.name:<40} {s.ready} ready")
+
+    # DaemonSets
+    if snapshot.daemonsets:
+        print(f"\n🔍 DAEMONSETS")
+        for d in snapshot.daemonsets:
+            icon = '✅' if d.available >= d.desired else '❌'
+            print(f"  {icon} {d.name:<40} {d.ready} ready")
+
+    # Services
+    if snapshot.services:
+        print(f"\n🔗 SERVICES")
+        for svc in snapshot.services:
+            print(f"  {svc['name']:<40} {svc['type']:<10} {svc['cluster_ip']:<20} {svc['ports']}")
+
+    # HPA
+    if snapshot.hpas:
+        print(f"\n📈 HPA")
+        for hpa in snapshot.hpas:
+            print(f"  {hpa['name']:<40} {hpa['reference']} {hpa['targets']} (min: {hpa['min_pods']}, max: {hpa['max_pods']}, replicas: {hpa['replicas']})")
+
+    # PVC
+    if snapshot.pvcs:
+        print(f"\n💾 PVC")
+        for pvc in snapshot.pvcs:
+            print(f"  {pvc['name']:<40} {pvc['status']:<10} {pvc['volume']:<40} {pvc['capacity']}")
+
+    # Issues
+    if diagnosis.get('issues'):
+        print(f"\n🚨 ISSUES FOUND ({len(diagnosis['issues'])})")
+        for issue in diagnosis['issues']:
+            icon_map = {'critical': '🔴', 'warning': '🟡', 'info': '🔵'}
+            icon = icon_map.get(issue.severity, '⚪')
+            print(f"  {icon} [{issue.severity.upper()}] [{issue.category}] {issue.source}")
+            print(f"       {issue.message}")
+
+    # Log analysis summary
+    log_analysis = diagnosis.get('log_summary', {})
+    if log_analysis:
+        print(f"\n📊 LOG ANALYSIS")
+        print(f"  Total: {log_analysis.get('total', 0)} | Errors: {log_analysis.get('errors', 0) or log_analysis.get('error', 0)} | Warnings: {log_analysis.get('warnings', 0) or log_analysis.get('warning', 0)}")
+
+    # Recommendations
+    if diagnosis.get('recommendations'):
+        print(f"\n💡 RECOMMENDATIONS")
+        for rec in diagnosis['recommendations']:
+            print(f"  - {rec}")
+
+    # LLM insights
+    if diagnosis.get('llm_insights'):
+        print(f"\n🤖 LLM ROOT CAUSE ANALYSIS")
+        print(diagnosis['llm_insights'])
+
+
 def main():
     parser = argparse.ArgumentParser(description='LogSentinel - AI-Powered Log Analyzer')
     parser.add_argument('files', nargs='*', help='Log files to analyze')
@@ -392,6 +701,7 @@ def main():
     parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
+    parser.add_argument('--diagnose', action='store_true', help='Deep namespace diagnosis mode')
     parser.add_argument('-m', '--monitor', action='store_true', help='Enable real-time monitor mode')
     parser.add_argument('-l', '--level', default='INFO',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
@@ -400,6 +710,10 @@ def main():
                         help='Comma-separated keywords (AND logic)')
     parser.add_argument('-r', '--refresh', type=int, default=2,
                         help='Pod discovery refresh interval in seconds (default: 2)')
+    parser.add_argument('--report', action='store_true',
+                        help='Generate an HTML report file from diagnosis')
+    parser.add_argument('--report-dir', default='./reports',
+                        help='Directory for report output (default: ./reports)')
 
     args = parser.parse_args()
 
@@ -412,6 +726,20 @@ def main():
             level=args.level,
             filter_keywords=args.filter,
             refresh=args.refresh,
+        )
+        return
+
+    if args.diagnose:
+        if not args.namespace:
+            parser.error('--diagnose requires --namespace')
+        diagnose_namespace(
+            namespace=args.namespace,
+            context=args.context,
+            lines=args.lines,
+            no_llm=args.no_llm,
+            output_format=args.output,
+            report=args.report,
+            report_dir=args.report_dir,
         )
         return
 
@@ -547,8 +875,47 @@ def main_cli():
     parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
+    parser.add_argument('--diagnose', action='store_true', help='Deep namespace diagnosis mode')
+    parser.add_argument('-m', '--monitor', action='store_true', help='Enable real-time monitor mode')
+    parser.add_argument('-l', '--level', default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                        help='Minimum severity level to display (default: INFO)')
+    parser.add_argument('-f', '--filter', default='',
+                        help='Comma-separated keywords (AND logic)')
+    parser.add_argument('-r', '--refresh', type=int, default=2,
+                        help='Pod discovery refresh interval in seconds (default: 2)')
+    parser.add_argument('--report', action='store_true',
+                        help='Generate an HTML report file from diagnosis')
+    parser.add_argument('--report-dir', default='./reports',
+                        help='Directory for report output (default: ./reports)')
 
     args = parser.parse_args()
+
+    if args.monitor:
+        if not args.namespace:
+            parser.error('--monitor requires --namespace')
+        monitor_namespace(
+            namespace=args.namespace,
+            context=args.context,
+            level=args.level,
+            filter_keywords=args.filter,
+            refresh=args.refresh,
+        )
+        return 0
+
+    if args.diagnose:
+        if not args.namespace:
+            parser.error('--diagnose requires --namespace')
+        diagnose_namespace(
+            namespace=args.namespace,
+            context=args.context,
+            lines=args.lines,
+            no_llm=args.no_llm,
+            output_format=args.output,
+            report=args.report,
+            report_dir=args.report_dir,
+        )
+        return 0
 
     # Collect logs
     entries = []

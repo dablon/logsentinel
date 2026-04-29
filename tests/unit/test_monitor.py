@@ -88,7 +88,7 @@ def test_merger_stop_signals_threads_to_exit():
     mock_proc.stdout.readline = MagicMock(side_effect=['line1\n', 'line2\n', ''])
 
     with patch('collectors.k8s_monitor.subprocess.Popen', return_value=mock_proc), \
-         patch('collectors.k8s_monitor.K8sCollector') as mock_collector_cls:
+         patch('collectors.k8s_collector.K8sCollector') as mock_collector_cls:
         mock_collector = mock_collector_cls.return_value
         mock_collector.list_pods.return_value = ['pod-a', 'pod-b']
 

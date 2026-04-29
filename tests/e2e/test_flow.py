@@ -173,16 +173,16 @@ class TestCLIIntegration:
         
         assert result.returncode == 0
         assert 'LogSentinel' in result.stdout
-    
-    def test_cli_monitor_flag():
-    """Test --monitor flag is recognized"""
-    result = subprocess.run(
-        ['python3', 'logsentinel.py', '--monitor', '--help'],
-        capture_output=True,
-        text=True,
-        cwd=os.path.join(os.path.dirname(__file__), '../..')
-    )
-    assert '--monitor' in result.stdout
+
+    def test_cli_monitor_flag(self):
+        """Test --monitor flag is recognized"""
+        result = subprocess.run(
+            ['python3', 'logsentinel.py', '--monitor', '--help'],
+            capture_output=True,
+            text=True,
+            cwd=os.path.join(os.path.dirname(__file__), '../..')
+        )
+        assert '--monitor' in result.stdout
 
     def test_cli_with_no_args(self):
         """Test CLI with no args"""
