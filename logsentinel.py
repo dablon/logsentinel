@@ -357,11 +357,13 @@ Be concise and actionable."""
             return f"Error: {e}"
 
 
-def monitor_namespace(namespace, context, level, filter_keywords, refresh):
+def monitor_namespace(namespace, context, level, filter_keywords, refresh, web=False, web_port=5050):
     """Real-time monitor entry point"""
     from collectors.k8s_monitor import LogMonitor
     import signal
     import sys
+    import queue
+    import threading
 
     def signal_handler(sig, frame):
         print('\nStopping monitor...')
@@ -370,14 +372,51 @@ def monitor_namespace(namespace, context, level, filter_keywords, refresh):
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    monitor = LogMonitor(
-        namespace=namespace,
-        context=context,
-        level=level,
-        filter_keywords=filter_keywords.split(',') if filter_keywords else [],
-        refresh=refresh,
-    )
-    monitor.start()
+    filter_kw = filter_keywords.split(',') if filter_keywords else []
+
+    if web:
+        from collectors.web_dashboard import start_web_dashboard, _CLUSTER_FILE
+        web_queue = queue.Queue(maxsize=5000)
+
+        # Read pending cluster switch from file (written by switch-cluster API)
+        pending_context = None
+        try:
+            with open(_CLUSTER_FILE, 'r') as f:
+                pending_context = f.read().strip()
+            os.remove(_CLUSTER_FILE)
+        except Exception:
+            pass
+
+        active_context = pending_context or context
+
+        monitor = LogMonitor(
+            namespace=namespace,
+            context=active_context,
+            level=level,
+            filter_keywords=filter_kw,
+            refresh=refresh,
+            web_queue=web_queue,
+        )
+        t = threading.Thread(target=monitor.start, daemon=True)
+        t.start()
+        start_web_dashboard(
+            web_queue=web_queue,
+            port=web_port,
+            namespace=namespace or 'all-namespaces',
+            level=level,
+            filter_keywords=filter_kw,
+            merger=monitor.merger,
+            monitor_ref=monitor,
+        )
+    else:
+        monitor = LogMonitor(
+            namespace=namespace,
+            context=context,
+            level=level,
+            filter_keywords=filter_kw,
+            refresh=refresh,
+        )
+        monitor.start()
 
 
 def diagnose_namespace(namespace, context, lines, no_llm, output_format, report, report_dir):
@@ -698,7 +737,8 @@ def main():
     parser.add_argument('--no-llm', action='store_true', help='Skip LLM analysis')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--pod', help='Kubernetes pod name to analyze')
-    parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
+    parser.add_argument('--namespace', help='Kubernetes namespace (use with --monitor to monitor all namespaces)')
+    parser.add_argument('--all-namespaces', action='store_true', help='Monitor all Kubernetes namespaces (only with --monitor)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
     parser.add_argument('--diagnose', action='store_true', help='Deep namespace diagnosis mode')
@@ -714,18 +754,22 @@ def main():
                         help='Generate an HTML report file from diagnosis')
     parser.add_argument('--report-dir', default='./reports',
                         help='Directory for report output (default: ./reports)')
+    parser.add_argument('--web', action='store_true', help='Enable embedded web dashboard')
+    parser.add_argument('--web-port', type=int, default=5050, help='Port for web dashboard (default: 5050)')
 
     args = parser.parse_args()
 
     if args.monitor:
-        if not args.namespace:
-            parser.error('--monitor requires --namespace')
+        if not args.namespace and not args.all_namespaces:
+            parser.error('--monitor requires --namespace or --all-namespaces')
         monitor_namespace(
-            namespace=args.namespace,
+            namespace=None if args.all_namespaces else args.namespace,
             context=args.context,
             level=args.level,
             filter_keywords=args.filter,
             refresh=args.refresh,
+            web=args.web,
+            web_port=args.web_port,
         )
         return
 
@@ -872,7 +916,8 @@ def main_cli():
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('--version', action='version', version='LogSentinel 1.0.0')
     parser.add_argument('--pod', help='Kubernetes pod name to analyze')
-    parser.add_argument('--namespace', help='Kubernetes namespace (reads all pods when --pod is not provided)')
+    parser.add_argument('--namespace', help='Kubernetes namespace (use with --monitor to monitor all namespaces)')
+    parser.add_argument('--all-namespaces', action='store_true', help='Monitor all Kubernetes namespaces (only with --monitor)')
     parser.add_argument('--k8s-container', dest='k8s_container', help='Container name within the Kubernetes pod')
     parser.add_argument('--context', help='Kubernetes context to use')
     parser.add_argument('--diagnose', action='store_true', help='Deep namespace diagnosis mode')
@@ -888,18 +933,22 @@ def main_cli():
                         help='Generate an HTML report file from diagnosis')
     parser.add_argument('--report-dir', default='./reports',
                         help='Directory for report output (default: ./reports)')
+    parser.add_argument('--web', action='store_true', help='Enable embedded web dashboard')
+    parser.add_argument('--web-port', type=int, default=5050, help='Port for web dashboard (default: 5050)')
 
     args = parser.parse_args()
 
     if args.monitor:
-        if not args.namespace:
-            parser.error('--monitor requires --namespace')
+        if not args.namespace and not args.all_namespaces:
+            parser.error('--monitor requires --namespace or --all-namespaces')
         monitor_namespace(
-            namespace=args.namespace,
+            namespace=None if args.all_namespaces else args.namespace,
             context=args.context,
             level=args.level,
             filter_keywords=args.filter,
             refresh=args.refresh,
+            web=args.web,
+            web_port=args.web_port,
         )
         return 0
 

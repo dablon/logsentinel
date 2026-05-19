@@ -11,6 +11,20 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
     command: ["--help"]
 
+  logsentinel-web:
+    build: .
+    ports:
+      - "${WEB_PORT:-5050}:5050"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - KUBECONFIG=/kubeconfig/config
+    command: ["--monitor", "--all-namespaces", "--web", "--web-port", "5050", "--context", "aks-dev-tafitech-eastus"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /c/Users/nicol/.kube/config:/kubeconfig/config:ro
+      - /c/Users/nicol/.minikube:/root/.minikube:ro
+
   test:
     build: .
     command: pytest tests/ -v

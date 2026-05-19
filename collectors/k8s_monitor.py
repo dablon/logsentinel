@@ -17,6 +17,15 @@ class LogLine:
     message: str
     raw: str            # original unparsed line
 
+    def to_dict(self):
+        return {
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'level': self.level,
+            'source': self.source,
+            'message': self.message,
+            'raw': self.raw,
+        }
+
 
 LEVELS = {'DEBUG': 0, 'INFO': 1, 'WARNING': 2, 'ERROR': 3, 'CRITICAL': 4}
 
@@ -99,11 +108,14 @@ class TerminalDisplay:
 
 
 class LogStreamMerger:
-    def __init__(self, namespace: str, context: str | None = None, lines_back: int = 50):
+    def __init__(self, namespace: str | None, context: str | None = None, lines_back: int = 50):
         self.namespace = namespace
         self.context = context
         self.lines_back = lines_back
-        self.pods: dict[str, dict] = {}  # pod_name -> {'thread': Thread, 'process': Popen}
+        # pod_key -> {'thread': Thread, 'process': Popen, 'namespace': str}
+        # key is (namespace, pod_name) when namespace is None (all namespaces),
+        # otherwise just pod_name for backwards compatibility
+        self.pods: dict[str, dict] = {}
         self.output_queue: queue.Queue = queue.Queue()
         self._stop_event = threading.Event()
         self._pod_lock = threading.Lock()
@@ -114,10 +126,10 @@ class LogStreamMerger:
             args += ['--context', self.context]
         return args
 
-    def _stream_pod(self, pod_name: str, container: str | None = None):
+    def _stream_pod(self, pod_name: str, namespace: str | None, container: str | None = None):
         cmd = self._base_args() + ['logs', '--follow', pod_name, '--tail', str(self.lines_back)]
-        if self.namespace:
-            cmd += ['-n', self.namespace]
+        if namespace:
+            cmd += ['-n', namespace]
         if container:
             cmd += ['-c', container]
         try:
@@ -129,28 +141,67 @@ class LogStreamMerger:
                 encoding='utf-8',
                 errors='replace',
             )
+            # In all-namespaces mode (self.namespace is None), use full key with namespace
+            # In single namespace mode, use just pod_name
+            if self.namespace is None and namespace:
+                pod_key = f'{namespace}/{pod_name}'
+            else:
+                pod_key = pod_name
             with self._pod_lock:
-                if pod_name in self.pods:
-                    self.pods[pod_name]['process'] = proc
+                if pod_key in self.pods:
+                    self.pods[pod_key]['process'] = proc
             for line in iter(proc.stdout.readline, ''):
                 if self._stop_event.is_set():
                     break
                 if line:
-                    self.output_queue.put((pod_name, line.rstrip('\n')))
+                    self.output_queue.put((namespace, pod_name, line.rstrip('\n')))
             proc.stdout.close()
         except Exception as e:
             print(f'Error streaming pod {pod_name}: {e}', file=sys.stderr)
+
+    def _get_pods_with_namespace(self) -> list[tuple[str, str]]:
+        """Return list of (namespace, pod_name) tuples. Only for all-namespaces mode."""
+        cmd = self._base_args() + ['get', 'pods', '--all-namespaces', '-o', 'json']
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30
+            )
+            if result.returncode != 0:
+                return []
+            import json
+            data = json.loads(result.stdout)
+            pairs = []
+            for item in data.get('items', []):
+                ns = item.get('metadata', {}).get('namespace', '')
+                name = item.get('metadata', {}).get('name', '')
+                if ns and name:
+                    pairs.append((ns, name))
+            return pairs
+        except Exception as e:
+            print(f'Error listing pods with namespaces: {e}', file=sys.stderr)
+            return []
 
     def start(self):
         from collectors.k8s_collector import K8sCollector
         collector = K8sCollector(namespace=self.namespace, context=self.context)
         pod_names = collector.list_pods()
-        for pod_name in pod_names:
-            with self._pod_lock:
-                self.pods[pod_name] = {'thread': None, 'process': None}
-            t = threading.Thread(target=self._stream_pod, args=(pod_name,), daemon=True)
-            self.pods[pod_name]['thread'] = t
-            t.start()
+        if self.namespace is None:
+            # All namespaces mode: get pods with their namespaces
+            pod_list = self._get_pods_with_namespace()
+            for namespace, pod_name in pod_list:
+                pod_key = f'{namespace}/{pod_name}'
+                with self._pod_lock:
+                    self.pods[pod_key] = {'thread': None, 'process': None, 'namespace': namespace}
+                t = threading.Thread(target=self._stream_pod, args=(pod_name, namespace), daemon=True)
+                self.pods[pod_key]['thread'] = t
+                t.start()
+        else:
+            for pod_name in pod_names:
+                with self._pod_lock:
+                    self.pods[pod_name] = {'thread': None, 'process': None, 'namespace': self.namespace}
+                t = threading.Thread(target=self._stream_pod, args=(pod_name, self.namespace), daemon=True)
+                self.pods[pod_name]['thread'] = t
+                t.start()
 
     def stream(self):
         while not self._stop_event.is_set():
@@ -179,11 +230,12 @@ class LogStreamMerger:
 class LogMonitor:
     def __init__(
         self,
-        namespace: str,
+        namespace: str | None,
         context: str | None = None,
         level: str = 'INFO',
         filter_keywords: list[str] | None = None,
         refresh: int = 2,
+        web_queue: queue.Queue | None = None,
     ):
         self.namespace = namespace
         self.context = context
@@ -193,42 +245,65 @@ class LogMonitor:
         self.merger = LogStreamMerger(namespace=namespace, context=context, lines_back=50)
         self.display = TerminalDisplay()
         self._stop_event = threading.Event()
+        self.web_queue = web_queue
+        self._cluster_state = {'context': context}
+        self._cluster_lock = threading.Lock()
 
-    def _parse_raw_line(self, pod_name: str, raw: str) -> LogLine:
+    def switch_cluster(self, new_context: str | None):
+        """Switch to a new cluster context and restart the merger."""
+        with self._cluster_lock:
+            old_context = self._cluster_state.get('context')
+            if old_context == new_context:
+                return
+            self._cluster_state['context'] = new_context
+        # Signal the merger to stop so the stream loop picks up the change
+        self.merger.stop()
+
+    def get_cluster_context(self) -> str | None:
+        with self._cluster_lock:
+            return self._cluster_state.get('context')
+
+    def _parse_raw_line(self, namespace: str | None, pod_name: str, raw: str) -> LogLine:
         """Best-effort parse of a raw log line into LogLine.
         Reuses existing LogParser from logsentinel.py for timestamp/level extraction."""
         from logsentinel import LogParser
         parser = LogParser()
-        entry = parser.parse_line(raw, source=f'k8s:{self.namespace}/{pod_name}')
+        ns_display = namespace if namespace is not None else 'all-namespaces'
+        entry = parser.parse_line(raw, source=f'k8s:{ns_display}/{pod_name}')
         if entry:
             return LogLine(
                 timestamp=datetime.fromisoformat(entry.timestamp) if entry.timestamp else None,
                 level=entry.level,
-                source=pod_name,
+                source=f'{namespace}/{pod_name}' if namespace else pod_name,
                 message=entry.message,
                 raw=raw,
             )
         return LogLine(
             timestamp=None,
             level='INFO',
-            source=pod_name,
+            source=f'{namespace}/{pod_name}' if namespace else pod_name,
             message=raw,
             raw=raw,
         )
 
     def start(self):
-        self.display.print_header(self.namespace, self.severity_filter.threshold, self.keyword_filter.keywords)
+        self.display.print_header(self.namespace or 'all-namespaces', self.severity_filter.threshold, self.keyword_filter.keywords)
         self.merger.start()
         stats_interval = 30
         last_stats = time.time()
         while not self._stop_event.is_set():
-            for pod_name, raw_line in self.merger.stream():
-                log_line = self._parse_raw_line(pod_name, raw_line)
+            for namespace, pod_name, raw_line in self.merger.stream():
+                log_line = self._parse_raw_line(namespace, pod_name, raw_line)
                 if not self.severity_filter.passes(log_line):
                     continue
                 if not self.keyword_filter.passes(log_line):
                     continue
                 self.display.print_line(log_line)
+                if self.web_queue is not None:
+                    try:
+                        self.web_queue.put_nowait(log_line)
+                    except queue.Full:
+                        pass
                 now = time.time()
                 if now - last_stats >= stats_interval:
                     self.display.print_stats()

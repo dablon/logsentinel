@@ -19,10 +19,12 @@ class K8sCollector:
         return args
 
     def list_pods(self) -> List[str]:
-        """Return pod names in the configured namespace."""
+        """Return pod names in the configured namespace (or all namespaces if namespace is None)."""
         cmd = self._base_args() + ['get', 'pods', '-o', 'jsonpath={.items[*].metadata.name}']
         if self.namespace:
             cmd += ['-n', self.namespace]
+        elif self.namespace is None:
+            cmd += ['--all-namespaces']
         try:
             result = subprocess.run(
                 cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30

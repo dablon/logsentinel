@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LogSentinel Dashboard</title>
+<style>
+:root {
+  --bg: #0a0e1a; --surface: #111827; --border: #1f2937; --text: #f9fafb;
+  --muted: #9ca3af; --red: #ef4444; --amber: #f59e0b; --blue: #3b82f6; --gray: #6b7280; --green: #22c55e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+
+#topbar {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: .6rem 1.25rem; display: flex; align-items: center; gap: 1.5rem; flex-shrink: 0;
+}
+#topbar h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em; color: #f8fafc; }
+#topbar h1 span { color: var(--blue); }
+.sep { width: 1px; height: 24px; background: var(--border); }
+.ns-badge {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .8rem; color: var(--muted);
+}
+.ns-badge strong { color: var(--text); font-weight: 600; }
+#conn-indicator {
+  display: flex; align-items: center; gap: .4rem; font-size: .8rem; margin-left: auto;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
+.dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.dot.error { background: var(--red); }
+
+#filters {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: .5rem 1.25rem; display: flex; align-items: center; gap: .75rem; flex-shrink: 0; flex-wrap: wrap;
+}
+.flabel { font-size: .75rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+select, input {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: .3rem .6rem; font-size: .8rem; outline: none;
+}
+select:focus, input:focus { border-color: var(--blue); }
+input { width: 180px; }
+select { min-width: 130px; }
+button {
+  background: var(--border); color: var(--text); border: none;
+  border-radius: 6px; padding: .3rem .75rem; font-size: .8rem; cursor: pointer;
+}
+button:hover { background: #374151; }
+button.btn-blue { background: var(--blue); }
+button.btn-blue:hover { background: #2563eb; }
+
+#ns-list {
+  display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+}
+.ns-btn {
+  font-size: .72rem; padding: .15rem .5rem; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted); cursor: pointer;
+}
+.ns-btn:hover { border-color: var(--blue); color: var(--text); }
+.ns-btn.active { background: rgba(59,130,246,.15); border-color: var(--blue); color: var(--blue); }
+
+#stats-bar {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: .3rem 1.25rem; font-size: .75rem; color: var(--muted); display: flex; gap: 1.5rem; flex-shrink: 0;
+}
+#stats-bar span { display: flex; align-items: center; gap: .3rem; }
+#stats-bar .val { color: var(--text); font-weight: 600; }
+#stats-bar .val.red { color: var(--red); }
+#stats-bar .val.amber { color: var(--amber); }
+
+#log-container { flex: 1; overflow-y: auto; background: var(--bg); }
+.log-line {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: .78rem; line-height: 1.5; padding: .2rem 1.25rem;
+  border-left: 3px solid transparent; display: flex; gap: .5rem; align-items: baseline;
+}
+.log-line:hover { background: rgba(255,255,255,.02); }
+.log-line.E { border-left-color: var(--red); background: rgba(239,68,68,.05); }
+.log-line.W { border-left-color: var(--amber); }
+.log-line.I { color: #93c5fd; }
+.log-line.D { color: var(--gray); }
+.lvl { font-weight: 700; min-width: 3.5rem; text-transform: uppercase; font-size: .7rem; }
+.lvl.E { color: var(--red); }
+.lvl.W { color: var(--amber); }
+.lvl.I { color: var(--blue); }
+.lvl.D { color: var(--gray); }
+.ts { color: var(--gray); font-size: .72rem; white-space: nowrap; min-width: 8rem; }
+.src { color: var(--blue); font-size: .72rem; min-width: 8rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg { flex: 1; color: var(--text); word-break: break-word; }
+.log-line.E .msg { color: #fca5a5; }
+.log-line.W .msg { color: #fcd34d; }
+
+#empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); gap: .5rem;
+}
+#empty-state .big { font-size: 3rem; }
+#empty-state p { font-size: .9rem; }
+
+#footer {
+  background: var(--surface); border-top: 1px solid var(--border);
+  padding: .3rem 1.25rem; font-size: .7rem; color: var(--muted); display: flex; gap: 1.5rem; flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>Log<span>Sentinel</span></h1>
+  <div class="sep"></div>
+  <div class="ns-badge">
+    <span class="flabel" style="font-size:.7rem">Cluster</span>
+    <select id="cluster-select" style="min-width:200px;font-size:.8rem;">
+      <option value="">Select cluster...</option>
+    </select>
+    <button id="btn-connect" style="background:var(--blue);font-size:.8rem;">Connect</button>
+  </div>
+  <div class="sep"></div>
+  <div class="ns-badge">
+    Namespace: <strong id="ns-display">all</strong>
+  </div>
+  <div id="conn-indicator">
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-text">Disconnected</span>
+  </div>
+</div>
+
+<div id="filters">
+  <span class="flabel">Level</span>
+  <select id="level-select">
+    <option value="DEBUG">DEBUG</option>
+    <option value="INFO" selected>INFO</option>
+    <option value="WARNING">WARNING</option>
+    <option value="ERROR">ERROR</option>
+    <option value="CRITICAL">CRITICAL</option>
+  </select>
+
+  <span class="flabel">Namespace</span>
+  <select id="ns-select">
+    <option value="">All Namespaces</option>
+  </select>
+
+  <span class="flabel">Keyword</span>
+  <input type="text" id="kw-filter" placeholder="filter...">
+
+  <button id="btn-pause" class="btn-blue">Pause</button>
+  <button id="btn-clear">Clear</button>
+</div>
+
+<div id="stats-bar">
+  <span>Displayed: <span class="val" id="s-displayed">0</span></span>
+  <span>Errors: <span class="val red" id="s-errors">0</span></span>
+  <span>Warnings: <span class="val amber" id="s-warnings">0</span></span>
+  <span>Lines/sec: <span class="val" id="s-rate">0</span></span>
+  <span>Uptime: <span class="val" id="s-uptime">0s</span></span>
+</div>
+
+<div id="log-container">
+  <div id="empty-state">
+    <div class="big">◌</div>
+    <p>Waiting for logs...</p>
+    <p style="font-size:.75rem">Logs will appear here when pods produce output</p>
+  </div>
+</div>
+
+<div id="footer">
+  <span>LogSentinel Dashboard</span>
+  <span>SSE Streaming</span>
+  <span id="f-displayed">0 displayed</span>
+  <span id="f-errors">0 errors</span>
+</div>
+
+<script>
+const LEVELS = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+const MAX_LINES = 3000;
+let displayed = 0, errors = 0, warnings = 0, paused = false;
+let startTime = Date.now(), lineCount = 0, rateWindow = [];
+let levelThreshold = 'INFO', kwFilter = '', selectedNs = '';
+let allPods = [];
+let nsSet = new Set();
+const container = document.getElementById('log-container');
+const emptyState = document.getElementById('empty-state');
+
+function $id(id) { return document.getElementById(id); }
+
+function setConn(connected) {
+  $id('conn-dot').className = 'dot' + (connected ? ' live' : ' error');
+  $id('conn-text').textContent = connected ? 'Live' : 'Disconnected';
+}
+
+function updateStats() {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const rate = rateWindow.length ? (rateWindow.reduce((a,b)=>a+b,0) / rateWindow.length).toFixed(1) : '0';
+  $id('s-displayed').textContent = displayed;
+  $id('s-errors').textContent = errors;
+  $id('s-warnings').textContent = warnings;
+  $id('s-rate').textContent = rate;
+  $id('s-uptime').textContent = elapsed + 's';
+  $id('f-displayed').textContent = displayed + ' displayed';
+  $id('f-errors').textContent = errors + ' errors';
+}
+
+function shouldShow(entry) {
+  const lvl = entry.level || 'INFO';
+  if (LEVELS[lvl] < LEVELS[levelThreshold]) return false;
+  if (kwFilter && !(entry.message || '').toLowerCase().includes(kwFilter.toLowerCase())) return false;
+  if (selectedNs) {
+    const src = entry.source || '';
+    if (!src.startsWith(selectedNs + '/')) return false;
+  }
+  return true;
+}
+
+function addLine(entry) {
+  if (emptyState) emptyState.style.display = 'none';
+  const lvl = (entry.level || 'INFO')[0].toUpperCase();
+  const cssLvl = { E: 'E', W: 'W', I: 'I', D: 'D' }[lvl] || 'I';
+  const line = document.createElement('div');
+  line.className = `log-line ${cssLvl}`;
+  const ts = entry.timestamp ? entry.timestamp.replace('T', ' ').slice(0, 19) : 'N/A';
+  const src = entry.source || '';
+  line.innerHTML = `<span class="ts">${ts}</span><span class="lvl ${cssLvl}">[${lvl}]</span><span class="src" title="${src}">${src}</span><span class="msg">${escHtml(entry.message || '')}</span>`;
+  container.appendChild(line);
+  displayed++;
+  if (cssLvl === 'E') errors++;
+  else if (cssLvl === 'W') warnings++;
+  rateWindow.push(1);
+  if (rateWindow.length > 10) rateWindow.shift();
+  if (container.children.length > MAX_LINES) container.removeChild(container.firstChild);
+  if (!paused) container.scrollTop = container.scrollHeight;
+  updateStats();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buildNsSelect() {
+  const sel = $id('ns-select');
+  sel.innerHTML = '<option value="">All Namespaces</option>';
+  [...nsSet].sort().forEach(ns => {
+    sel.innerHTML += `<option value="${escHtml(ns)}">${escHtml(ns)}</option>`;
+  });
+}
+
+function onNsChange(ns) {
+  selectedNs = ns;
+  $id('ns-display').textContent = ns || 'all';
+}
+
+$id('level-select').addEventListener('change', e => { levelThreshold = e.target.value; });
+$id('kw-filter').addEventListener('input', e => { kwFilter = e.target.value; });
+$id('ns-select').addEventListener('change', e => { onNsChange(e.target.value); });
+$id('btn-pause').addEventListener('click', () => {
+  paused = !paused;
+  $id('btn-pause').textContent = paused ? 'Resume' : 'Pause';
+  $id('btn-pause').style.background = paused ? '#22c55e' : '';
+  if (!paused) container.scrollTop = container.scrollHeight;
+});
+$id('btn-clear').addEventListener('click', () => {
+  container.innerHTML = '';
+  displayed = errors = warnings = lineCount = 0;
+  rateWindow = [];
+  emptyState.style.display = 'flex';
+  updateStats();
+});
+
+// fetch initial status
+fetch('/api/status').then(r => r.json()).then(data => {
+  $id('ns-display').textContent = data.namespace || 'all';
+  $id('level-select').value = data.level || 'INFO';
+  levelThreshold = data.level || 'INFO';
+  if (data.context) $id('cluster-select').value = data.context;
+}).catch(() => {});
+
+// load available clusters (once on init; preserve selection on subsequent polls)
+function loadClusters() {
+  fetch('/api/clusters').then(r => r.json()).then(data => {
+    const sel = $id('cluster-select');
+    const contexts = data.contexts || [];
+    // Only rebuild dropdown if empty (first load)
+    if (sel.options.length <= 1) {
+      sel.innerHTML = '<option value="">Select cluster...</option>';
+      contexts.forEach(ctx => {
+        const opt = document.createElement('option');
+        opt.value = ctx;
+        opt.textContent = ctx;
+        sel.appendChild(opt);
+      });
+    }
+    // Restore selection: prefer pending_cluster from sessionStorage, then current-status context
+    const pending = sessionStorage.getItem('pending_cluster');
+    if (pending && [...sel.options].some(o => o.value === pending)) {
+      sel.value = pending;
+    } else {
+      fetch('/api/status').then(r => r.json()).then(sdata => {
+        if (sdata.context && [...sel.options].some(o => o.value === sdata.context)) {
+          sel.value = sdata.context;
+        }
+      }).catch(() => {});
+    }
+  }).catch(() => {});
+}
+
+// Connect button: switch cluster
+$id('btn-connect').addEventListener('click', () => {
+  const ctx = $id('cluster-select').value;
+  if (!ctx) return;
+  sessionStorage.setItem('pending_cluster', ctx);
+  setConn(false);
+  $id('conn-text').textContent = 'Switching...';
+  fetch('/api/switch-cluster', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context: ctx })
+  }).then(r => r.json()).then(data => {
+    if (data.switched) {
+      setTimeout(() => { window.location.reload(); }, 2500);
+    }
+  }).catch(() => { window.location.reload(); });
+});
+
+// Also allow Enter key on cluster select
+$id('cluster-select').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $id('btn-connect').click();
+});
+loadClusters();
+
+$id('cluster-select').addEventListener('change', e => {
+  const ctx = e.target.value;
+  if (!ctx) return;
+  sessionStorage.setItem('pending_cluster', ctx);
+  fetch('/api/switch-cluster', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context: ctx })
+  }).then(r => r.json()).then(data => {
+    if (data.switched) {
+      setTimeout(() => { window.location.reload(); }, 2000);
+    }
+  }).catch(() => { window.location.reload(); });
+});
+
+// poll pods and extract namespaces
+function loadPods() {
+  fetch('/api/pods').then(r => r.json()).then(data => {
+    const pods = data.pods || [];
+    const newNsSet = new Set();
+    pods.forEach(p => {
+      const parts = p.name.split('/');
+      if (parts.length >= 2) newNsSet.add(parts[0]);
+    });
+    const nsChanged = ![...newNsSet].every(ns => nsSet.has(ns));
+    nsSet = newNsSet;
+    allPods = pods;
+    if (nsChanged) buildNsSelect();
+  }).catch(() => {});
+}
+loadPods();
+setInterval(loadPods, 5000);
+
+let evtSource = new EventSource('/stream');
+evtSource.onopen = () => { setConn(true); startTime = Date.now(); };
+evtSource.onerror = () => {
+  setConn(false);
+  evtSource.close();
+  setTimeout(() => { evtSource = new EventSource('/stream'); }, 3000);
+};
+evtSource.onmessage = e => {
+  try {
+    const entry = JSON.parse(e.data);
+    if (shouldShow(entry)) addLine(entry);
+  } catch(ex) {}
+};
+
+setInterval(updateStats, 1000);
+</script>
+</body>
+</html>

@@ -113,6 +113,20 @@ def test_terminal_display_colors():
     assert td._color_for_level('DEBUG') == td.GRAY
 
 
+def test_log_monitor_accepts_web_queue():
+    import queue
+    q = queue.Queue()
+    from collectors.k8s_monitor import LogMonitor
+    monitor = LogMonitor(namespace='default', web_queue=q)
+    assert monitor.web_queue is q
+
+
+def test_log_monitor_web_queue_is_none_by_default():
+    from collectors.k8s_monitor import LogMonitor
+    monitor = LogMonitor(namespace='default')
+    assert monitor.web_queue is None
+
+
 def test_log_monitor_collects_pods_on_start():
     """LogMonitor.start() discovers pods via K8sCollector"""
     from unittest.mock import patch, MagicMock
